@@ -1,0 +1,14 @@
+{
+  "name": "jenkins-orchestrator-ui",
+  "version": "1.0.0",
+  "description": "Lightweight Node UI to trigger Jenkins orchestrator with selected projects.",
+  "private": true,
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
