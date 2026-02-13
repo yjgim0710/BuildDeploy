@@ -11,6 +11,7 @@ Jenkins view를 선택하고, 해당 view 안에서 `-frontend`가 포함된 job
 - 선택한 frontend job 병렬 빌드 + 결과 대기
 - frontend 전부 성공 시 선택한 `-nignx` job 빌드
 - nginx 실행 시 `IMAGE_NAME`은 수동 입력 우선, 미입력 시 `이전 빌드 파라미터 -> Jenkins job config -> .env fallback` 순으로 찾고 patch 버전(+1) 자동 증가
+- `기존 버전 유지` 체크 시 자동 +1 없이 현재 `IMAGE_NAME` 그대로 사용
 - nginx 빌드 성공 후 Jenkins job `config.xml`의 `IMAGE_NAME` 기본값/파이프라인 값도 새 버전으로 저장
 - Jenkins crumb(CSRF) 자동 처리
 

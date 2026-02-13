@@ -54,6 +54,7 @@ const server = http.createServer(async (req, res) => {
       const selectedJobs = Array.isArray(body.jobs) ? body.jobs : [];
       const selectedNginxJob = typeof body.selectedNginxJob === 'string' ? body.selectedNginxJob.trim() : '';
       const nginxImageName = typeof body.nginxImageName === 'string' ? body.nginxImageName.trim() : '';
+      const keepExistingImageVersion = body.keepExistingImageVersion === true;
       const excludeKeywords = parseExcludeInput(body.excludeJobs);
 
       if (!viewName) {
@@ -65,6 +66,7 @@ const server = http.createServer(async (req, res) => {
         selectedJobs,
         selectedNginxJob,
         nginxImageName,
+        keepExistingImageVersion,
         excludeKeywords,
       });
       return sendJson(res, 202, result);
@@ -131,6 +133,7 @@ async function orchestrateViewBuild({
   selectedJobs,
   selectedNginxJob = '',
   nginxImageName = '',
+  keepExistingImageVersion = false,
   excludeKeywords = [],
 }) {
   const normalizedSelected = normalizeSelectedJobs(selectedJobs);
@@ -175,7 +178,12 @@ async function orchestrateViewBuild({
   }
   const nginxResults = await Promise.all(
     nginxToRun.map(async (jobFullName) => {
-      const resolvedImageName = await resolveNginxImageName(client, jobFullName, nginxImageName);
+      const resolvedImageName = await resolveNginxImageName(
+        client,
+        jobFullName,
+        nginxImageName,
+        keepExistingImageVersion,
+      );
       const buildParameters = { [NGINX_IMAGE_PARAM_NAME]: resolvedImageName };
       try {
         let result;
@@ -231,6 +239,7 @@ async function orchestrateViewBuild({
     frontendResults,
     nginxJobs: nginxToRun,
     selectedNginxJob: resolvedNginxJob || null,
+    keepExistingImageVersion,
     nginxSelectionFallback,
     nginxResults,
   };
@@ -482,7 +491,7 @@ function isJobExcluded(job, excludeKeywords) {
   return excludeKeywords.some((kw) => job.fullName.includes(kw) || job.name.includes(kw));
 }
 
-async function resolveNginxImageName(client, jobFullName, manualImageName) {
+async function resolveNginxImageName(client, jobFullName, manualImageName, keepExistingImageVersion = false) {
   if (manualImageName) {
     return manualImageName;
   }
@@ -495,6 +504,10 @@ async function resolveNginxImageName(client, jobFullName, manualImageName) {
       `Cannot resolve ${NGINX_IMAGE_PARAM_NAME} from previous build or pipeline config.`,
       400,
     );
+  }
+
+  if (keepExistingImageVersion) {
+    return base;
   }
 
   return bumpPatchVersion(base);

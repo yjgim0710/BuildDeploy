@@ -9,6 +9,7 @@ const nginxTargetsEl = document.getElementById('nginx-targets');
 const nginxJobsEl = document.getElementById('nginx-jobs');
 const excludeJobsEl = document.getElementById('exclude-jobs');
 const nginxImageNameEl = document.getElementById('nginx-image-name');
+const keepExistingImageVersionEl = document.getElementById('keep-existing-image-version');
 
 let currentFrontendJobs = [];
 
@@ -154,6 +155,7 @@ formEl.addEventListener('submit', async (event) => {
         jobs: selectedJobs,
         selectedNginxJob: selectedNginx,
         nginxImageName: nginxImageNameEl.value.trim(),
+        keepExistingImageVersion: keepExistingImageVersionEl.checked,
         excludeJobs: getExcludeJobsRaw(),
       }),
     });
@@ -180,6 +182,7 @@ formEl.addEventListener('submit', async (event) => {
       '오케스트레이션 완료',
       `View: ${payload.viewName}`,
       excludedInfo,
+      `기존 버전 유지: ${payload.keepExistingImageVersion ? 'ON' : 'OFF'}`,
       `선택된 Nignx: ${payload.selectedNginxJob || '없음'}`,
       ...(payload.nginxSelectionFallback ? ['Nignx 선택값이 없어 첫 번째 대상으로 자동 보정됨'] : []),
       'Frontend 결과:',
