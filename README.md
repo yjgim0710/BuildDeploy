@@ -37,6 +37,8 @@ JOB_TIMEOUT_MS=1800000
 NGINX_IMAGE_PARAM_NAME=IMAGE_NAME
 NGINX_DEFAULT_IMAGE_NAME=registry.example.com/team/frontend:1.0.0
 LOCAL_GIT_ROOT=/Users/yourname/dev/repos
+LOCAL_GIT_SCAN_DEPTH=8
+LOCAL_GIT_PATH_MAP={"group/project":"my-local-folder","service-a-frontend":"service-a-custom-dir"}
 ```
 
 3. 실행

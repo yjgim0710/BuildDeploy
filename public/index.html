@@ -115,6 +115,33 @@
         background: #fff1f1;
         color: var(--danger);
       }
+      .summary {
+        margin-top: 16px;
+        border: 1px solid #d1d5db;
+        border-radius: 8px;
+        padding: 12px;
+        background: #fff;
+      }
+      .summary-title {
+        margin: 0 0 8px;
+        color: #000;
+        font-weight: 700;
+        font-size: 0.95rem;
+      }
+      .summary-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 0.9rem;
+      }
+      .summary-table th,
+      .summary-table td {
+        border-bottom: 1px solid #e5e7eb;
+        text-align: left;
+        padding: 6px 4px;
+      }
+      .summary-table th {
+        color: #374151;
+      }
       a {
         color: #0a53d1;
       }
@@ -184,6 +211,20 @@
         </form>
 
         <div id="status" class="status" style="display: none"></div>
+        <div class="summary">
+          <p class="summary-title">결과 요약</p>
+          <table class="summary-table">
+            <thead>
+              <tr>
+                <th>프로젝트</th>
+                <th>구분</th>
+                <th>태그</th>
+                <th>상태</th>
+              </tr>
+            </thead>
+            <tbody id="summary-body"></tbody>
+          </table>
+        </div>
       </div>
     </div>
 

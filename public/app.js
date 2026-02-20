@@ -12,10 +12,12 @@ const nginxImageNameEl = document.getElementById('nginx-image-name');
 const keepExistingImageVersionEl = document.getElementById('keep-existing-image-version');
 const createGitTagsEl = document.getElementById('create-git-tags');
 const countSummaryEl = document.getElementById('count-summary');
+const summaryBodyEl = document.getElementById('summary-body');
 
 let currentFrontendJobs = [];
 let currentFilteredCount = 0;
 let currentTotalCount = 0;
+const summaryRows = new Map();
 
 init().catch((err) => {
   showStatus(`Failed to load views: ${err.message}`, true);
@@ -156,6 +158,8 @@ formEl.addEventListener('submit', async (event) => {
     }
 
     showStatus('Jenkins 오케스트레이션 실행 중... (완료까지 대기)');
+    buildInitialSummary(selectedJobs, selectedNginx, createGitTagsEl.checked);
+    setAllSummaryStatus('빌드 중');
 
     const response = await fetch('/api/trigger', {
       method: 'POST',
@@ -173,6 +177,7 @@ formEl.addEventListener('submit', async (event) => {
 
     const payload = await readJsonSafely(response);
     if (!response.ok || !payload?.ok) {
+      applySummaryFromErrorPayload(payload);
       const details = payload?.details ? `\n상세: ${JSON.stringify(payload.details, null, 2)}` : '';
       showStatus((payload?.error || `Request failed (HTTP ${response.status})`) + details, true);
       return;
@@ -203,6 +208,7 @@ formEl.addEventListener('submit', async (event) => {
       ...(nginxLines.length ? nginxLines : ['- 없음']),
     ];
 
+    applySummaryFromResponse(payload);
     if (Array.isArray(payload.gitTagResults) && payload.gitTagResults.length > 0) {
       lines.push('Git 태그 결과:');
       payload.gitTagResults.forEach((r) => {
@@ -212,6 +218,7 @@ formEl.addEventListener('submit', async (event) => {
 
     showStatus(lines.join('\n'));
   } catch (error) {
+    setAllSummaryStatus('완료');
     showStatus(`실행 중 오류: ${error.message}`, true);
   }
 });
@@ -249,6 +256,109 @@ function getSelectedFrontendCount() {
 
 function renderCountSummary() {
   countSummaryEl.textContent = `(${currentFilteredCount}/${currentTotalCount}) - 선택된 아이템: ${getSelectedFrontendCount()}`;
+}
+
+function buildInitialSummary(frontendJobs, nginxJob, createGitTags) {
+  summaryRows.clear();
+  summaryBodyEl.innerHTML = '';
+
+  frontendJobs.forEach((job) => {
+    addSummaryRow({
+      key: `frontend:${job}`,
+      project: job,
+      type: 'frontend',
+      tag: '-',
+      status: '대기 중',
+    });
+  });
+
+  if (nginxJob) {
+    addSummaryRow({
+      key: `nginx:${nginxJob}`,
+      project: nginxJob,
+      type: 'nginx',
+      tag: '-',
+      status: '대기 중',
+    });
+  }
+
+  if (createGitTags) {
+    addSummaryRow({
+      key: 'git-tags',
+      project: 'git-tag',
+      type: 'tag',
+      tag: '-',
+      status: '대기 중',
+    });
+  }
+}
+
+function addSummaryRow({ key, project, type, tag, status }) {
+  const tr = document.createElement('tr');
+  tr.innerHTML = `<td>${escapeHtml(project)}</td><td>${escapeHtml(type)}</td><td>${escapeHtml(tag)}</td><td>${escapeHtml(status)}</td>`;
+  summaryBodyEl.appendChild(tr);
+  summaryRows.set(key, tr);
+}
+
+function updateSummaryRow(key, { tag, status }) {
+  const tr = summaryRows.get(key);
+  if (!tr) return;
+  if (tag !== undefined) tr.children[2].textContent = String(tag);
+  if (status !== undefined) tr.children[3].textContent = String(status);
+}
+
+function setAllSummaryStatus(status) {
+  for (const tr of summaryRows.values()) {
+    tr.children[3].textContent = status;
+  }
+}
+
+function applySummaryFromResponse(payload) {
+  (payload.frontendResults || []).forEach((r) => {
+    updateSummaryRow(`frontend:${r.job}`, { status: '완료' });
+  });
+
+  (payload.nginxResults || []).forEach((r) => {
+    const tag = r.appliedParameters?.IMAGE_NAME || r.imageName || '-';
+    updateSummaryRow(`nginx:${r.job}`, { tag, status: '완료' });
+  });
+
+  if (Array.isArray(payload.gitTagResults) && payload.gitTagResults.length > 0) {
+    const tags = payload.gitTagResults.map((r) => r.tagName || '-').join(', ');
+    updateSummaryRow('git-tags', { tag: tags, status: '완료' });
+  } else if (summaryRows.has('git-tags')) {
+    updateSummaryRow('git-tags', { status: '완료' });
+  }
+}
+
+function applySummaryFromErrorPayload(payload) {
+  const details = payload?.details || {};
+
+  if (Array.isArray(details.frontendResults)) {
+    details.frontendResults.forEach((r) => {
+      updateSummaryRow(`frontend:${r.job}`, { status: '완료' });
+    });
+  }
+
+  if (Array.isArray(details.nginxResults)) {
+    details.nginxResults.forEach((r) => {
+      const tag = r.appliedParameters?.IMAGE_NAME || r.imageName || '-';
+      updateSummaryRow(`nginx:${r.job}`, { tag, status: '완료' });
+    });
+  }
+
+  if (summaryRows.has('git-tags')) {
+    updateSummaryRow('git-tags', { status: '완료' });
+  }
+}
+
+function escapeHtml(value) {
+  return String(value)
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
 }
 
 async function readJsonSafely(response) {

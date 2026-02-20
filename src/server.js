@@ -14,6 +14,8 @@ const DEFAULT_EXCLUDE_JOBS = process.env.DEFAULT_EXCLUDE_JOBS || '';
 const NGINX_IMAGE_PARAM_NAME = process.env.NGINX_IMAGE_PARAM_NAME || 'IMAGE_NAME';
 const NGINX_DEFAULT_IMAGE_NAME = process.env.NGINX_DEFAULT_IMAGE_NAME || '';
 const LOCAL_GIT_ROOT = process.env.LOCAL_GIT_ROOT || '';
+const LOCAL_GIT_PATH_MAP = parseJsonEnv(process.env.LOCAL_GIT_PATH_MAP || '{}');
+const LOCAL_GIT_SCAN_DEPTH = Number(process.env.LOCAL_GIT_SCAN_DEPTH || 8);
 const POLL_INTERVAL_MS = Number(process.env.POLL_INTERVAL_MS || 3000);
 const JOB_TIMEOUT_MS = Number(process.env.JOB_TIMEOUT_MS || 30 * 60 * 1000);
 
@@ -765,14 +767,14 @@ async function collectJobGitInfo(client, jobFullName) {
   }
 
   const repoName = extractRepoName(repoUrl);
-  const localPath = path.join(LOCAL_GIT_ROOT || '', repoName);
+  const repoIdentity = normalizeRepoIdentity(repoUrl);
 
   return {
     job: jobFullName,
     repoUrl,
+    repoIdentity,
     branch,
     repoName,
-    localPath,
   };
 }
 
@@ -793,7 +795,15 @@ function extractRepoUrlFromConfigXml(xml) {
   if (scopedUrl) return scopedUrl.trim();
 
   const genericUrl = decoded.match(/<url>\s*([^<\s]+)\s*<\/url>/i)?.[1];
-  return genericUrl ? genericUrl.trim() : '';
+  if (genericUrl) return genericUrl.trim();
+
+  // Fallback for pipeline-as-code definitions where repo URL is embedded in script text.
+  const scriptGitHttp = decoded.match(/https?:\/\/[^\s'"<]+?\.git/i)?.[0];
+  if (scriptGitHttp) return scriptGitHttp.trim();
+  const scriptGitSsh = decoded.match(/[A-Za-z0-9._-]+@[A-Za-z0-9._-]+:[^\s'"<]+?\.git/i)?.[0];
+  if (scriptGitSsh) return scriptGitSsh.trim();
+
+  return '';
 }
 
 function extractBranchFromConfigXml(xml) {
@@ -832,7 +842,7 @@ function extractImageVersion(imageName) {
 }
 
 async function createGitTagForJob(jobInfo, imageVersion) {
-  const localPath = jobInfo.localPath;
+  const localPath = await resolveLocalRepoPath(jobInfo);
   if (!LOCAL_GIT_ROOT) {
     throw createHttpError('LOCAL_GIT_ROOT is not set.', 400);
   }
@@ -866,6 +876,7 @@ async function createGitTagForJob(jobInfo, imageVersion) {
 
   return {
     ...jobInfo,
+    localPath,
     tagName,
     commitSha,
     created: true,
@@ -879,6 +890,148 @@ async function runGit(cwd, args) {
   } catch (error) {
     const stderr = error?.stderr ? String(error.stderr) : '';
     throw createHttpError(`Git command failed (git -C ${cwd} ${args.join(' ')}): ${stderr.slice(0, 300)}`, 400);
+  }
+}
+
+async function resolveLocalRepoPath(jobInfo) {
+  if (!LOCAL_GIT_ROOT) {
+    throw createHttpError('LOCAL_GIT_ROOT is not set.', 400);
+  }
+
+  const mapped = findMappedLocalPath(jobInfo);
+  if (mapped) return mapped;
+
+  // Direct fallback by repository folder name:
+  // e.g. .../account-management-frontend.git -> <LOCAL_GIT_ROOT>/account-management-frontend
+  const directByRepoName = path.join(LOCAL_GIT_ROOT, jobInfo.repoName);
+  if (fs.existsSync(directByRepoName)) {
+    return directByRepoName;
+  }
+
+  const candidates = listGitCandidateDirs(LOCAL_GIT_ROOT, LOCAL_GIT_SCAN_DEPTH);
+  const scanned = [];
+  for (const candidate of candidates) {
+    try {
+      const remoteUrl = (await runGit(candidate, ['remote', 'get-url', 'origin'])).trim();
+      const identity = normalizeRepoIdentity(remoteUrl);
+      const name = path.basename(candidate).toLowerCase();
+      scanned.push({ path: candidate, origin: remoteUrl, identity, name });
+      if (identity && identity === jobInfo.repoIdentity) {
+        return candidate;
+      }
+    } catch {
+      // ignore non-git folders or repos without origin
+    }
+  }
+
+  // Fallback: if repo name uniquely matches local directory basename, use it.
+  const targetName = String(jobInfo.repoName || '').toLowerCase();
+  if (targetName) {
+    const byName = scanned.filter((s) => s.name === targetName);
+    if (byName.length === 1) {
+      return byName[0].path;
+    }
+  }
+
+  throw createHttpError(
+    `Cannot map Jenkins repository to local path. repo=${jobInfo.repoUrl}, identity=${jobInfo.repoIdentity}`,
+    400,
+    {
+      jobInfo,
+      localGitRoot: LOCAL_GIT_ROOT,
+      scannedCount: scanned.length,
+      scannedSample: scanned.slice(0, 10),
+      hint: 'Set LOCAL_GIT_PATH_MAP with key=repoIdentity or job name.',
+    },
+  );
+}
+
+function findMappedLocalPath(jobInfo) {
+  const rawKeys = [
+    jobInfo.job,
+    jobInfo.repoUrl,
+    jobInfo.repoIdentity,
+    jobInfo.repoName,
+  ];
+  const keys = Array.from(new Set(
+    rawKeys
+      .filter(Boolean)
+      .flatMap((k) => [String(k), String(k).toLowerCase()]),
+  ));
+
+  const normalizedMap = {};
+  for (const [k, v] of Object.entries(LOCAL_GIT_PATH_MAP || {})) {
+    normalizedMap[String(k)] = v;
+    normalizedMap[String(k).toLowerCase()] = v;
+    const nk = normalizeRepoIdentity(String(k));
+    if (nk) normalizedMap[nk] = v;
+  }
+
+  for (const key of keys) {
+    const mapped = normalizedMap[key];
+    if (!mapped) continue;
+    const abs = path.isAbsolute(mapped) ? mapped : path.join(LOCAL_GIT_ROOT, mapped);
+    if (fs.existsSync(abs)) return abs;
+  }
+
+  return '';
+}
+
+function listGitCandidateDirs(rootDir, maxDepth = 3) {
+  const results = [];
+
+  function walk(current, depth) {
+    if (depth > maxDepth) return;
+    let entries = [];
+    try {
+      entries = fs.readdirSync(current, { withFileTypes: true });
+    } catch {
+      return;
+    }
+
+    const hasGit = entries.some((e) => e.name === '.git' && (e.isDirectory() || e.isFile()));
+    if (hasGit) {
+      results.push(current);
+      return;
+    }
+
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      if (entry.name.startsWith('.')) continue;
+      walk(path.join(current, entry.name), depth + 1);
+    }
+  }
+
+  walk(rootDir, 0);
+  return results;
+}
+
+function normalizeRepoIdentity(repoUrl) {
+  const raw = String(repoUrl || '').trim().replace(/\.git$/, '');
+  if (!raw) return '';
+
+  // ssh style: git@host:group/subgroup/repo
+  const sshScp = raw.match(/^[^@]+@[^:]+:(.+)$/);
+  if (sshScp) return sshScp[1].replace(/^\/+/, '').toLowerCase();
+
+  try {
+    const parsed = new URL(raw);
+    return parsed.pathname.replace(/^\/+/, '').toLowerCase();
+  } catch {
+    // fallback for unknown format
+    return raw.split(':').pop().replace(/^\/+/, '').toLowerCase();
+  }
+}
+
+function parseJsonEnv(raw) {
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return parsed;
+    }
+    return {};
+  } catch {
+    return {};
   }
 }
 
