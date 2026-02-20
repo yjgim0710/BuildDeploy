@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Jenkins View Build Trigger</title>
+    <style>
+      :root {
+        --card: #ffffff;
+        --text: #1f2937;
+        --accent: #0f62fe;
+        --muted: #6b7280;
+        --danger: #b42318;
+      }
+      body {
+        margin: 0;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background: linear-gradient(160deg, #f7fbff, #f5f5ff);
+        color: var(--text);
+      }
+      .wrap {
+        max-width: 820px;
+        margin: 32px auto;
+        padding: 0 16px;
+      }
+      .card {
+        background: var(--card);
+        border-radius: 14px;
+        box-shadow: 0 8px 30px rgba(15, 98, 254, 0.08);
+        padding: 20px;
+      }
+      h1 {
+        margin: 0 0 8px;
+        font-size: 1.4rem;
+      }
+      p {
+        margin: 0 0 16px;
+        color: var(--muted);
+      }
+      .field {
+        margin-bottom: 16px;
+      }
+      .field label {
+        display: block;
+        font-size: 0.9rem;
+        color: var(--muted);
+        margin-bottom: 6px;
+      }
+      select {
+        width: 100%;
+        border: 1px solid #ccd5ea;
+        border-radius: 8px;
+        padding: 10px;
+        font-size: 0.95rem;
+      }
+      input[type="text"] {
+        width: 100%;
+        border: 1px solid #ccd5ea;
+        border-radius: 8px;
+        padding: 10px;
+        font-size: 0.95rem;
+        box-sizing: border-box;
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+        gap: 8px 12px;
+        margin: 10px 0 18px;
+      }
+      .grid label {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 0.95rem;
+      }
+      .row {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        align-items: center;
+      }
+      .count-summary {
+        margin-left: 6px;
+        font-size: 0.9rem;
+        color: #374151;
+      }
+      button {
+        border: 0;
+        border-radius: 8px;
+        padding: 10px 14px;
+        background: var(--accent);
+        color: white;
+        cursor: pointer;
+      }
+      button.secondary {
+        background: #dde5ff;
+        color: #1b3ea8;
+      }
+      .info {
+        color: #1b3ea8;
+        background: #eef4ff;
+        border-radius: 8px;
+        padding: 10px 12px;
+        margin-bottom: 10px;
+      }
+      .status {
+        margin-top: 14px;
+        padding: 10px 12px;
+        border-radius: 8px;
+        background: #eef4ff;
+        color: #1b3ea8;
+        white-space: pre-wrap;
+      }
+      .status.error {
+        background: #fff1f1;
+        color: var(--danger);
+      }
+      a {
+        color: #0a53d1;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="card">
+        <h1>Jenkins View Build Trigger</h1>
+        <p>View를 선택하고 `-frontend` 잡만 빌드합니다. 성공 시 같은 view의 `-nignx` 잡을 빌드합니다.</p>
+
+        <div class="field">
+          <label for="view-select">Jenkins View</label>
+          <select id="view-select">
+            <option value="">View를 선택하세요</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label for="exclude-jobs">제외할 Job 문자열(콤마 구분)</label>
+          <input
+            id="exclude-jobs"
+            type="text"
+            placeholder="예: legacy, test-frontend, old-nignx"
+          />
+        </div>
+
+        <div class="field">
+          <label for="nginx-image-name">Nignx 이미지명 직접 지정 (선택)</label>
+          <input
+            id="nginx-image-name"
+            type="text"
+            placeholder="비우면 마지막 x.x.x 버전의 patch(+1) 자동 증가"
+          />
+        </div>
+
+        <div class="field">
+          <label style="display:flex; align-items:center; gap:8px; color:#1f2937;">
+            <input id="keep-existing-image-version" type="checkbox" />
+            기존 버전 유지 (+1 스킵)
+          </label>
+        </div>
+
+        <div class="field">
+          <label style="display:flex; align-items:center; gap:8px; color:#1f2937;">
+            <input id="create-git-tags" type="checkbox" />
+            Git 태그 생성 (기본: OFF)
+          </label>
+        </div>
+
+        <div class="info" id="nginx-targets" style="display:none"></div>
+
+        <div class="row" style="margin-bottom: 10px;">
+          <button type="button" class="secondary" id="reload-jobs">목록 새로고침</button>
+          <button type="button" class="secondary" id="check-all">전체 선택</button>
+          <button type="button" class="secondary" id="clear-all">전체 해제</button>
+          <span id="count-summary" class="count-summary">(0/0) - 선택된 아이템: 0</span>
+        </div>
+
+        <form id="trigger-form">
+          <div class="grid" id="frontend-jobs"></div>
+          <div class="field">
+            <label>후속 Nignx 대상 (Radio)</label>
+            <div class="grid" id="nginx-jobs"></div>
+          </div>
+          <button type="submit">선택한 Frontend 빌드 실행</button>
+        </form>
+
+        <div id="status" class="status" style="display: none"></div>
+      </div>
+    </div>
+
+    <script src="/app.js"></script>
+  </body>
+</html>
