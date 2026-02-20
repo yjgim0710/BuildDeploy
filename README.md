@@ -24,7 +24,7 @@ cp .env.example .env
 
 2. `.env` 수정
 ```env
-PORT=3000
+PORT=8091
 JENKINS_URL=http://jenkins.local
 JENKINS_USER=jenkins-user
 JENKINS_API_TOKEN=<SET_LOCAL>
@@ -50,7 +50,7 @@ npm run dev
 ```
 
 4. 접속
-- [http://localhost:3000](http://localhost:3000)
+- [http://localhost:8091](http://localhost:8091)
 
 ## API
 - `GET /api/views`: Jenkins view 목록

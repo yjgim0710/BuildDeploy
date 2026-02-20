@@ -7,7 +7,7 @@ const execFileAsync = promisify(execFile);
 
 loadDotEnv(path.resolve(process.cwd(), '.env'));
 
-const PORT = Number(process.env.PORT || 3000);
+const PORT = Number(process.env.PORT || 8091);
 const FRONTEND_KEYWORD = process.env.FRONTEND_KEYWORD || '-frontend';
 const NGINX_KEYWORDS = parseKeywordList(process.env.NGINX_KEYWORDS || '-nignx');
 const DEFAULT_EXCLUDE_JOBS = process.env.DEFAULT_EXCLUDE_JOBS || '';
