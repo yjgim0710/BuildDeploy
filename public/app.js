@@ -188,7 +188,7 @@ formEl.addEventListener('submit', async (event) => {
       const applied = r.appliedParameters?.IMAGE_NAME || r.imageName || 'IMAGE_NAME 미확인';
       const configSaved = r.configUpdated ? 'config 저장됨' : 'config 미변경';
       const mode = r.triggerMode || 'unknown';
-      return `- ${r.job}: ${r.result} (${applied}, ${configSaved}, mode=${mode})`;
+      return `- ${r.job}: ${r.result} (image=${applied}, ${configSaved}, mode=${mode})`;
     });
     const excludedInfo = payload.excludedKeywords?.length
       ? `제외 키워드: ${payload.excludedKeywords.join(', ')}`
@@ -281,16 +281,6 @@ function buildInitialSummary(frontendJobs, nginxJob, createGitTags) {
       status: '대기 중',
     });
   }
-
-  if (createGitTags) {
-    addSummaryRow({
-      key: 'git-tags',
-      project: 'git-tag',
-      type: 'tag',
-      tag: '-',
-      status: '대기 중',
-    });
-  }
 }
 
 function addSummaryRow({ key, project, type, tag, status }) {
@@ -319,16 +309,15 @@ function applySummaryFromResponse(payload) {
   });
 
   (payload.nginxResults || []).forEach((r) => {
-    const tag = r.appliedParameters?.IMAGE_NAME || r.imageName || '-';
-    updateSummaryRow(`nginx:${r.job}`, { tag, status: '완료' });
+    updateSummaryRow(`nginx:${r.job}`, { tag: '-', status: '완료' });
   });
 
-  if (Array.isArray(payload.gitTagResults) && payload.gitTagResults.length > 0) {
-    const tags = payload.gitTagResults.map((r) => r.tagName || '-').join(', ');
-    updateSummaryRow('git-tags', { tag: tags, status: '완료' });
-  } else if (summaryRows.has('git-tags')) {
-    updateSummaryRow('git-tags', { status: '완료' });
-  }
+  (payload.gitTagResults || []).forEach((r) => {
+    updateSummaryRow(`frontend:${r.job}`, {
+      tag: r.tagName || '-',
+      status: '완료',
+    });
+  });
 }
 
 function applySummaryFromErrorPayload(payload) {
@@ -342,13 +331,8 @@ function applySummaryFromErrorPayload(payload) {
 
   if (Array.isArray(details.nginxResults)) {
     details.nginxResults.forEach((r) => {
-      const tag = r.appliedParameters?.IMAGE_NAME || r.imageName || '-';
-      updateSummaryRow(`nginx:${r.job}`, { tag, status: '완료' });
+      updateSummaryRow(`nginx:${r.job}`, { tag: '-', status: '완료' });
     });
-  }
-
-  if (summaryRows.has('git-tags')) {
-    updateSummaryRow('git-tags', { status: '완료' });
   }
 }
 

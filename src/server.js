@@ -163,8 +163,9 @@ async function orchestrateViewBuild({
   }
 
   const client = await createJenkinsClient();
+  const taggableFrontendJobs = normalizedSelected.filter((jobFullName) => !isNginxJobName(jobFullName));
   const selectedJobGitInfos = await Promise.all(
-    normalizedSelected.map((jobFullName) => collectJobGitInfo(client, jobFullName)),
+    taggableFrontendJobs.map((jobFullName) => collectJobGitInfo(client, jobFullName)),
   );
 
   const frontendResults = await Promise.all(
@@ -525,6 +526,10 @@ function isJobExcluded(job, excludeKeywords) {
   return excludeKeywords.some((kw) => job.fullName.includes(kw) || job.name.includes(kw));
 }
 
+function isNginxJobName(jobName) {
+  return NGINX_KEYWORDS.some((kw) => String(jobName || '').includes(kw));
+}
+
 async function resolveNginxImageName(client, jobFullName, manualImageName, keepExistingImageVersion = false) {
   if (manualImageName) {
     return manualImageName;
@@ -757,7 +762,7 @@ function escapeRegExp(text) {
 async function collectJobGitInfo(client, jobFullName) {
   const xml = await getJobConfigXml(client, jobFullName);
   const repoUrl = extractRepoUrlFromConfigXml(xml);
-  const branch = normalizeBranchName(extractBranchFromConfigXml(xml));
+  const branch = await resolveActualBranchName(client, jobFullName, xml);
 
   if (!repoUrl) {
     throw createHttpError(`Cannot find repository URL in Jenkins job config: ${jobFullName}`, 400);
@@ -798,12 +803,49 @@ function extractRepoUrlFromConfigXml(xml) {
   if (genericUrl) return genericUrl.trim();
 
   // Fallback for pipeline-as-code definitions where repo URL is embedded in script text.
-  const scriptGitHttp = decoded.match(/https?:\/\/[^\s'"<]+?\.git/i)?.[0];
-  if (scriptGitHttp) return scriptGitHttp.trim();
-  const scriptGitSsh = decoded.match(/[A-Za-z0-9._-]+@[A-Za-z0-9._-]+:[^\s'"<]+?\.git/i)?.[0];
-  if (scriptGitSsh) return scriptGitSsh.trim();
+  const scriptBody = decoded.match(/<script>([\s\S]*?)<\/script>/i)?.[1] || decoded;
+  const withoutBrandingStage = removeStageBlockByName(scriptBody, 'checkout-branding');
+  const gitUrls = extractGitUrlsFromText(withoutBrandingStage);
+  if (gitUrls.length > 0) return gitUrls[0];
 
   return '';
+}
+
+function extractGitUrlsFromText(text) {
+  const out = [];
+  const httpMatches = text.match(/https?:\/\/[^\s'"<]+?\.git/ig) || [];
+  const sshMatches = text.match(/[A-Za-z0-9._-]+@[A-Za-z0-9._-]+:[^\s'"<]+?\.git/g) || [];
+  for (const u of [...httpMatches, ...sshMatches]) {
+    if (!out.includes(u)) out.push(u.trim());
+  }
+  return out;
+}
+
+function removeStageBlockByName(scriptText, stageName) {
+  const stageRegex = new RegExp(`stage\\s*\\(\\s*['"]${escapeRegExp(stageName)}['"]\\s*\\)`, 'i');
+  const m = stageRegex.exec(scriptText);
+  if (!m) return scriptText;
+
+  const stageIdx = m.index;
+  const openIdx = scriptText.indexOf('{', stageIdx);
+  if (openIdx < 0) return scriptText;
+
+  let depth = 0;
+  let endIdx = -1;
+  for (let i = openIdx; i < scriptText.length; i += 1) {
+    const ch = scriptText[i];
+    if (ch === '{') depth += 1;
+    if (ch === '}') {
+      depth -= 1;
+      if (depth === 0) {
+        endIdx = i;
+        break;
+      }
+    }
+  }
+
+  if (endIdx < 0) return scriptText;
+  return `${scriptText.slice(0, stageIdx)}${scriptText.slice(endIdx + 1)}`;
 }
 
 function extractBranchFromConfigXml(xml) {
@@ -816,6 +858,45 @@ function extractBranchFromConfigXml(xml) {
   if (branchTag) return branchTag.trim();
 
   return '';
+}
+
+async function resolveActualBranchName(client, jobFullName, xml) {
+  const branchRaw = extractBranchFromConfigXml(xml);
+  const branch = normalizeBranchName(branchRaw);
+  if (!branch) return '';
+  if (!looksLikeBranchToken(branch)) return branch;
+
+  const fromConfigDefault = extractParamDefaultValueFromConfigXml(xml, branch);
+  if (fromConfigDefault && !looksLikeBranchToken(fromConfigDefault)) {
+    return normalizeBranchName(fromConfigDefault);
+  }
+
+  const jobPath = `/${toJenkinsJobPath(jobFullName)}`;
+  const lastBuildParams = await fetchBuildParameters(client, `${jobPath}/lastBuild`);
+  const fromLastBuild = lastBuildParams[branch];
+  if (fromLastBuild && !looksLikeBranchToken(String(fromLastBuild))) {
+    return normalizeBranchName(String(fromLastBuild));
+  }
+
+  throw createHttpError(
+    `Cannot resolve concrete branch for ${jobFullName}. token=${branch}`,
+    400,
+    { job: jobFullName, branchToken: branch },
+  );
+}
+
+function extractParamDefaultValueFromConfigXml(xml, paramName) {
+  const decoded = decodeXmlEntities(xml);
+  const m = decoded.match(
+    new RegExp(`<name>\\s*${escapeRegExp(paramName)}\\s*</name>[\\s\\S]*?<defaultValue>([^<]+)</defaultValue>`, 'i'),
+  );
+  return m?.[1]?.trim() || '';
+}
+
+function looksLikeBranchToken(branch) {
+  if (!branch) return false;
+  if (branch.includes('$') || branch.includes('{') || branch.includes('}')) return true;
+  return /^[A-Z0-9_]+$/.test(branch);
 }
 
 function normalizeBranchName(branchRaw) {
